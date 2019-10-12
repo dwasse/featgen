@@ -186,15 +186,12 @@ class FeatureGenerator:
             # TODO: Should this be mean or most recent values?
             resampled_df['price'] = df['close'].resample(freq).mean()
             resampled_df.fillna(method='ffill', inplace=True)
-
-            # resampled_df = resampled_df.loc[~df.index.duplicated(keep='first')]
-
             add_timestamp(resampled_df)
+
             # Calculate features
             if freq in self.config.raw_freqs:
                 add_raw_features(resampled_df, period_dict=self.config.raw_periods)
             if freq in self.config.moving_avg_freqs:
-                # add_moving_avgs(resampled_df, period_dict=self.config.moving_avg_periods)
                 add_sma(resampled_df, 'price', self.config.moving_avg_periods['sma'])
                 add_ema(resampled_df, 'price', self.config.moving_avg_periods['ema'])
             if freq in self.config.indicator_freqs:
@@ -202,18 +199,9 @@ class FeatureGenerator:
             if freq in self.config.s_r_freqs:
                 add_s_r(resampled_df, periods=self.config.s_r_periods, freq=freq)
             del resampled_df['timestamp']
+
             # Merge the resampled_df back into the original frequency
             for col in resampled_df:
                 if col not in df:
                     df[col] = resampled_df[col]
         df.fillna(method='ffill', inplace=True)
-
-
-
-
-
-
-
-
-
-
