@@ -1,5 +1,3 @@
-
-
 day = 86400
 
 # Periods in seconds
