@@ -81,22 +81,28 @@ def add_moving_avgs(df, period_dict):
         elif feature == 'ema':
             add_ema(df, feature, period_dict[feature])
 
-    # for feature in period_dict:
-    #     for period in period_dict[feature]:
-    #         col = feature + '_' + str(period)
-    #         if feature == 'sma':
-    #             df[col] = df['price'].rolling(period).mean()
-    #         elif feature == 'ema':
-    #             df[col] = df['close'].ewm(span=period).mean()
-
 
 def add_sma(df, input_feature, periods):
+    """
+    Add simple moving average of a given feature, over given periods.
+    :param df: dataframe with datetime index
+    :param input_feature: feature to compute sma over
+    :param periods: list of integers
+    :return:
+    """
     for period in periods:
         col = input_feature + '_sma_' + str(period)
         df[col] = df[input_feature].rolling(period).mean()
 
 
 def add_ema(df, input_feature, periods):
+    """
+    Add exponentially weighted moving average of a given feature, over given periods.
+    :param df: dataframe with datetime index
+    :param input_feature: feature to compute ema over
+    :param periods: list of integers
+    :return:
+    """
     for period in periods:
         col = input_feature + '_ema_' + str(period)
         df[col] = df[input_feature].ewm(span=period).mean()
