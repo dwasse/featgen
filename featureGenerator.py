@@ -76,12 +76,30 @@ def add_moving_avgs(df, period_dict):
     :return:
     """
     for feature in period_dict:
-        for period in period_dict[feature]:
-            col = feature + '_' + str(period)
-            if feature == 'sma':
-                df[col] = df['price'].rolling(period).mean()
-            elif feature == 'ema':
-                df[col] = df['close'].ewm(span=period).mean()
+        if feature == 'sma':
+            add_sma(df, feature, period_dict[feature])
+        elif feature == 'ema':
+            add_ema(df, feature, period_dict[feature])
+
+    # for feature in period_dict:
+    #     for period in period_dict[feature]:
+    #         col = feature + '_' + str(period)
+    #         if feature == 'sma':
+    #             df[col] = df['price'].rolling(period).mean()
+    #         elif feature == 'ema':
+    #             df[col] = df['close'].ewm(span=period).mean()
+
+
+def add_sma(df, input_feature, periods):
+    for period in periods:
+        col = input_feature + '_sma_' + str(period)
+        df[col] = df[input_feature].rolling(period).mean()
+
+
+def add_ema(df, input_feature, periods):
+    for period in periods:
+        col = input_feature + '_ema_' + str(period)
+        df[col] = df[input_feature].ewm(span=period).mean()
 
 
 def add_indicators(df):
@@ -170,7 +188,9 @@ class FeatureGenerator:
             if freq in self.config.raw_freqs:
                 add_raw_features(resampled_df, period_dict=self.config.raw_periods)
             if freq in self.config.moving_avg_freqs:
-                add_moving_avgs(resampled_df, period_dict=self.config.moving_avg_periods)
+                # add_moving_avgs(resampled_df, period_dict=self.config.moving_avg_periods)
+                add_sma(resampled_df, 'price', self.config.moving_avg_periods['sma'])
+                add_ema(resampled_df, 'price', self.config.moving_avg_periods['ema'])
             if freq in self.config.indicator_freqs:
                 add_indicators(resampled_df)
             if freq in self.config.s_r_freqs:
@@ -181,8 +201,6 @@ class FeatureGenerator:
                 if col not in df:
                     df[col] = resampled_df[col]
         df.fillna(method='ffill', inplace=True)
-
-
 
 
 
