@@ -18,7 +18,7 @@ def add_timestamp(df):
     df['timestamp'] = df.index.astype(np.int64) // 10 ** 9
 
 
-def add_raw_features(df, period_dict):
+def add_raw_features(df, period_dict, freq=None):
     """
     Add basic features to dataframe with given lookback periods.
     :param df: a dataframe with datetime index
@@ -30,14 +30,12 @@ def add_raw_features(df, period_dict):
     # Compute preliminary features
     for feature in period_dict:
         for period in period_dict[feature]:
-            col = feature + '_' + str(period)
+            col = get_col_name(feature, period, freq)
             roll_freq = str(period) + 's'
             if feature == 'volume':
                 df[col] = df['volume'].rolling(roll_freq).sum()
             elif feature == 'vwap':
                 df[col] = df['total'].rolling(roll_freq).sum() / df['volume'].rolling(roll_freq).sum()
-            elif feature == 'volatility':
-                df[col] = df['price'].rolling(roll_freq).std()
             elif feature == 'volume_volatility':
                 df[col] = df['volume'].rolling(roll_freq).std()
             elif feature == 'vwap_change':
@@ -53,22 +51,36 @@ def add_raw_features(df, period_dict):
     # Compute rest of features
     for feature in period_dict:
         for period in period_dict[feature]:
-            col = feature + '_' + str(period)
+            col = get_col_name(feature, period, freq)
             if feature == 'local_min_max':
-                assert 'vwap_change' + '_' + str(period) in df
-                df[col] = np.sign(np.sign(df['vwap_change_' + str(period)]).diff())
+                vwap_change_col = get_col_name('vwap_change', period=period, freq=freq)
+                assert vwap_change_col in df
+                df[col] = np.sign(np.sign(df[vwap_change_col]).diff())
             elif feature == 'max_change':
-                assert 'max' + '_' + str(period) in df
-                df[col] = 100 * ((df['max_' + str(period)] / df['price'].shift(period, freq='S')) - 1)
+                max_col = get_col_name('max', period=period, freq=freq)
+                assert get_col_name('max', period=period, freq=freq) in df
+                df[col] = 100 * ((df[max_col] / df['price'].shift(period, freq='S')) - 1)
             elif feature == 'min_change':
-                assert 'min' + '_' + str(period) in df
-                df[col] = 100 * ((df['min_' + str(period)] / df['price'].shift(period, freq='S')) - 1)
+                min_col = get_col_name('min', period=period, freq=freq)
+                assert min_col in df
+                df[col] = 100 * ((df[min_col] / df['price'].shift(period, freq='S')) - 1)
+            elif feature == 'volatility':
+                price_change_col = get_col_name('price_change', period=period, freq=freq)
+                assert price_change_col in df
+                df[col] = df[price_change_col].rolling(roll_freq).std()
+    for feature in period_dict:
+        for period in period_dict[feature]:
+            col = get_col_name(feature, period, freq)
+            if feature == 'volatility_change':
+                vol_col = get_col_name('volatility', period, freq)
+                assert vol_col in df
+                df[col] = 100 * ((df[vol_col] / df[vol_col].shift(period, freq='S')) - 1)
     del df['total']
     df.fillna(method='ffill', inplace=True)
     df.fillna(0, inplace=True)
 
 
-def add_moving_avgs(df, period_dict):
+def add_moving_avgs(df, period_dict, freq):
     """
     Add simple and/or exponentially weighted moving averages to dataframe.
     :param df: dataframe with datetime index
@@ -77,12 +89,12 @@ def add_moving_avgs(df, period_dict):
     """
     for feature in period_dict:
         if feature == 'sma':
-            add_sma(df, feature, period_dict[feature])
+            add_sma(df, feature, period_dict[feature], freq)
         elif feature == 'ema':
-            add_ema(df, feature, period_dict[feature])
+            add_ema(df, feature, period_dict[feature], freq)
 
 
-def add_sma(df, input_feature, periods):
+def add_sma(df, input_feature, periods, freq=None):
     """
     Add simple moving average of a given feature, over given periods.
     :param df: dataframe with datetime index
@@ -91,11 +103,11 @@ def add_sma(df, input_feature, periods):
     :return:
     """
     for period in periods:
-        col = input_feature + '_sma_' + str(period)
+        col = get_col_name(input_feature + "_sma", period, freq)
         df[col] = df[input_feature].rolling(period).mean()
 
 
-def add_ema(df, input_feature, periods):
+def add_ema(df, input_feature, periods, freq=None):
     """
     Add exponentially weighted moving average of a given feature, over given periods.
     :param df: dataframe with datetime index
@@ -104,67 +116,82 @@ def add_ema(df, input_feature, periods):
     :return:
     """
     for period in periods:
-        col = input_feature + '_ema_' + str(period)
+        col = get_col_name(input_feature + "_ema", period, freq)
         df[col] = df[input_feature].ewm(span=period).mean()
 
 
-def add_indicators(df):
+def add_indicators(df, freq=None):
     """
     This function calculates technical analysis-based features on a dataframe.
     :param df: dataframe with datetime index
     """
     assert [c in ['open', 'high', 'low', 'close', 'volume'] for c in df]
+    old_cols = list(df.columns)
     df = ta.add_all_ta_features(df, 'open', 'high', 'low', 'close', 'volume') \
         .fillna(method='ffill').fillna(0)
+    new_cols = [c for c in list(df.columns) if c not in old_cols]
+    col_dict = {c: get_col_name(feature=c,freq=freq) for c in new_cols}
+    df.rename(columns=col_dict, inplace=True)
     df.fillna(method='ffill', inplace=True)
+    return df
 
 
-def add_s_r(df, periods, max_levels=10, freq='1h'):
-    from .supportResistance import RawPriceClusterLevels
-    """
-    Add support and resistance levels using Agglomerative Clustering.
-    :param df: dataframe with datetime index
-    :param periods: a list of lookback periods for support/resistance levels
-    :param max_levels: max number of support/resistance levels to add
-    :param freq: resampling frequency to speed up calculation (i.e. '1d')
-    :return: 
-    """
-    for period in periods:
-        resampled_df = df['close'].resample(freq).ohlc().fillna(method='ffill')
-        resampled_df.columns = [c.lower() for c in resampled_df]
-        for i in range(1, max_levels + 1):
-            resampled_df['s_r_level_' + str(i) + '_' + str(period)] = np.NaN
-            resampled_df['s_r_weight_' + str(i) + '_' + str(period)] = np.NaN
-        resampled_df['index'] = df.index
-        resampled_df.reset_index(inplace=True)
-        for index, row in resampled_df.iterrows():
-            cl = RawPriceClusterLevels(None, merge_percent=0.5, use_maximums=True, bars_for_peak=11)
-            start = index - period
-            if start < 0:
-                start = 0
-            s_r_data = resampled_df.iloc[start:index]
-            cl.fit(s_r_data)
-            levels = cl.levels
-            if levels is not None:
-                levels.sort(key=lambda x: x['peak_count'], reverse=True)
-                levels_to_apply = levels[:max_levels]
-                for i in range(1, len(levels_to_apply) + 1):
-                    resampled_df.loc[index, 's_r_level_' + str(i) + '_' + str(period)] = levels_to_apply[i - 1]['price']
-                    resampled_df.loc[index, 's_r_weight_' + str(i) + '_' + str(period)] = levels_to_apply[i - 1]['peak_count']
-        resampled_df.index = resampled_df['index']
-        del resampled_df['index']
-        for col in [c for c in df if 's_r' in c]:
-            df[col] = resampled_df[col]
-        df.fillna(method='ffill', inplace=True)
-        for i in range(1, max_levels + 1):
-            col = 's_r_level_' + str(i) + '_' + str(period)
-            if col in df:
-                df['s_r_diff_' + str(i) + '_' + str(period)] = df['price'] - df[col]
-                df['s_r_pct_' + str(i) + '_' + str(period)] = 100 * ((df['price'] / df[col]) - 1)
+# def add_s_r(df, periods, max_levels=10, freq='1h'):
+#     from .supportResistance import RawPriceClusterLevels
+#     """
+#     Add support and resistance levels using Agglomerative Clustering.
+#     :param df: dataframe with datetime index
+#     :param periods: a list of lookback periods for support/resistance levels
+#     :param max_levels: max number of support/resistance levels to add
+#     :param freq: resampling frequency to speed up calculation (i.e. '1d')
+#     :return: 
+#     """
+#     for period in periods:
+#         resampled_df = df['close'].resample(freq).ohlc().fillna(method='ffill')
+#         resampled_df.columns = [c.lower() for c in resampled_df]
+#         for i in range(1, max_levels + 1):
+#             resampled_df['s_r_level_' + str(i) + '_' + str(period)] = np.NaN
+#             resampled_df['s_r_weight_' + str(i) + '_' + str(period)] = np.NaN
+#         resampled_df['index'] = df.index
+#         resampled_df.reset_index(inplace=True)
+#         for index, row in resampled_df.iterrows():
+#             cl = RawPriceClusterLevels(None, merge_percent=0.5, use_maximums=True, bars_for_peak=11)
+#             start = index - period
+#             if start < 0:
+#                 start = 0
+#             s_r_data = resampled_df.iloc[start:index]
+#             cl.fit(s_r_data)
+#             levels = cl.levels
+#             if levels is not None:
+#                 levels.sort(key=lambda x: x['peak_count'], reverse=True)
+#                 levels_to_apply = levels[:max_levels]
+#                 for i in range(1, len(levels_to_apply) + 1):
+#                     resampled_df.loc[index, 's_r_level_' + str(i) + '_' + str(period)] = levels_to_apply[i - 1]['price']
+#                     resampled_df.loc[index, 's_r_weight_' + str(i) + '_' + str(period)] = levels_to_apply[i - 1]['peak_count']
+#         resampled_df.index = resampled_df['index']
+#         del resampled_df['index']
+#         for col in [c for c in df if 's_r' in c]:
+#             df[col] = resampled_df[col]
+#         df.fillna(method='ffill', inplace=True)
+#         for i in range(1, max_levels + 1):
+#             col = 's_r_level_' + str(i) + '_' + str(period)
+#             if col in df:
+#                 df['s_r_diff_' + str(i) + '_' + str(period)] = df['price'] - df[col]
+#                 df['s_r_pct_' + str(i) + '_' + str(period)] = 100 * ((df['price'] / df[col]) - 1)
+
+
+def get_col_name(feature, period=None, freq=None):
+    if period is None:
+        if freq is None:
+            return feature
+        return feature + "-" + freq
+    if freq is None:
+        return feature + "_" + str(period)
+    return feature + "_" + str(period) + "-" + str(freq)
 
 
 class FeatureGenerator:
-    def __init__(self, config=featureConfig):
+    def __init__(self, config=config):
         self.config = config
 
     def calculate_all_features(self, df, freqs=None):
@@ -177,6 +204,7 @@ class FeatureGenerator:
         if freqs is None:
             freqs = self.config.all_freqs
         for freq in freqs:
+            print("Calculating features for frequency: %s" % freq)
             assert [c in df for c in ['open', 'high', 'low', 'close']]
             resampled_df = df.resample(freq).agg({'open': 'first',
                                                   'high': 'max',
@@ -190,14 +218,15 @@ class FeatureGenerator:
 
             # Calculate features
             if freq in self.config.raw_freqs:
-                add_raw_features(resampled_df, period_dict=self.config.raw_periods)
+                print("Calculating raw features...")
+                add_raw_features(resampled_df, period_dict=self.config.raw_periods, freq=freq)
             if freq in self.config.moving_avg_freqs:
-                add_sma(resampled_df, 'price', self.config.moving_avg_periods['sma'])
-                add_ema(resampled_df, 'price', self.config.moving_avg_periods['ema'])
+                print("Calculating moving avg features...")
+                add_sma(resampled_df, 'price', self.config.moving_avg_periods['sma'], freq=freq)
+                add_ema(resampled_df, 'price', self.config.moving_avg_periods['ema'], freq=freq)
             if freq in self.config.indicator_freqs:
-                add_indicators(resampled_df)
-            if freq in self.config.s_r_freqs:
-                add_s_r(resampled_df, periods=self.config.s_r_periods, freq=freq)
+                print("Calculating indicator features...")
+                resampled_df = add_indicators(resampled_df, freq=freq)
             del resampled_df['timestamp']
 
             # Merge the resampled_df back into the original frequency
